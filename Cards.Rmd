@@ -1,0 +1,630 @@
+---
+title: "credit card"
+author: "jhk0530"
+date: '2020 6 13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## 라이브러리 로드
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+```
+
+## 데이터 로드
+
+- 데이터 출처 : [Kaggle Default of Credit Card Clients Dataset](https://www.kaggle.com/uciml/default-of-credit-card-clients-dataset/data)
+
+```{r}
+cards <- read.csv('UCI_Credit_Card.csv')
+
+```
+
+------
+
+# 데이터 형태
+
+데이터 항목은 총 25개로 다음과 같다.
+
+## 고객 정보
+
+1. ID : 각 고객 ID
+2. LIMIT_BAL: 사용 가능한 Credit (NT dollar) (includes individual and family/supplementary credit
+3. SEX: 성별 (1 = 남성, 2 = 여성)
+4. EDUCATION: 교육 수준(1 = 대학원, 2 = 대졸, 3 = 고졸, 4 = 기타, 5 ~ 6 = 미상)
+5. MARRIAGE: 기혼 상태 (1 = 기혼, 2 = 미혼, 3 = 기타)
+6. AGE: 나이
+7. default.payment.next.month: 지불 방식 (1 = 후불 , 0 = 선불?)
+
+**이하 데이터는 전부 2005년 기준.**
+
+## 상환 상태 (-1 : 완료, 그 외 숫자는 연체 기간, 9 이상은 9로 표기)
+
+PAY_0: 9월
+PAY_2: 8월
+PAY_3: 7월
+PAY_4: 6월
+PAY_5: 5월
+PAY_6: 4월
+
+## 명세서 금액
+
+BILL_AMT1: 9월
+BILL_AMT2: 8월
+BILL_AMT3: 7월
+BILL_AMT4: 6월
+BILL_AMT5: 5월
+BILL_AMT6: 4월
+
+## 이전 지불 금액
+
+PAY_AMT1: 9월
+PAY_AMT2: 8월
+PAY_AMT3: 7월
+PAY_AMT4: 6월
+PAY_AMT5: 5월
+PAY_AMT6: 4월
+
+------
+
+# 가능한 질문
+
+Kaggle에 inspiration 으로 올라와있는 질문은 다음 2개이다.
+
+1. 여러 특징에 따라 default payment가 얼마나 다른가 ?
+2. default payment 를 가장 잘 설명하는 변수는 ?
+
+대충 EDA나 varimplot 같은 걸로 충분히 결론이 나올 것 같은 내용들이다.
+
+솔직히 이런게 무슨 의미가 있는지 잘 모르겠고,
+
+1. 어떤 사람이 연체를 할까
+2. 어떤 사람이 결제를 많이 하는 우량고객인가 
+3. 계절 별로 연관이 있나 
+4. 고객이 그룹화 되어 지는가
+
+이 정도의 정보를 기대 할만 한 것 같다.
+
+------
+
+# 데이터 전처리 및 단순화
+
+- 분석 하기 전에, 데이터를 손 봐야 할 필요가 있음. 
+- 예시로, 고객의 나이가 41세인지 42세인지 정말로 관심이 없다. 
+  40대 혹은 40대 초반 이런식으로만 분류하면 충분.
+- 데이터가 정밀 할수록 당연히 예측은 좋아지지만, 과도하게 정밀하면 overfit issue생김
+
+## 1. ID : 그대로 둠 
+
+
+## 2. LIMIT_BAL : min : 10K, max = 1M, mean = 167K 니까 
+
+대충 10K ~ 20K, 20~40K, 40~60K, 60~80K, 80K~100K 이런식으로 등구간으로 나누려 했는데
+
+```{r}
+hist(cards$LIMIT_BAL)
+```
+
+큰일 날뻔 했음. 
+
+```{r}
+nrow(cards %>% filter(LIMIT_BAL > 500000)) # 206 
+```
+
+500K 이상은 전부 VIP로 간주 해도 충분함 (0.68%)
+0.68%는 좀 안이뻐서 45K 이상 으로 수정( 4% )
+
+```{r}
+vip_count <- nrow(cards %>% filter(LIMIT_BAL > 450000)) # 1231
+
+hist(cards$LIMIT_BAL[which(cards$LIMIT_BAL<=450000)])
+hist(cards$LIMIT_BAL[which(cards$LIMIT_BAL>100000 & cards$LIMIT_BAL<=450000)])
+```
+
+이후 분포에서 100K 이하 사용자 : 라이트 그룹으로 간주
+나머지 그룹에 대해서는 100K ~ 200K, 200K ~ 350K, 350K ~ 450K 로 나누면 충분.
+
+단, 그룹을 1,2,3,4,5 처럼 숫자로 구분 지어버리면 안 됨 
+
+결론 아래 테이블처럼 5개 그룹으로 나눔, 이후 factor 처리
+
+|그룹|수치|
+|:--:|:--:|
+|A|0~100K|
+|B|100~200K|
+|C|200~350K|
+|D|350~450K|
+|E|450K~1000K|
+
+
+```{r}
+group_lim_balance <- function(i){
+  if(i<100000){return('A')}
+  if(i<200000){return('B')}
+  if(i<350000){return('C')}
+  if(i<450000){return('D')}
+  return('E')
+}
+
+cards$LIMIT_BAL <- sapply(cards$LIMIT_BAL, group_lim_balance)
+cards$LIMIT_BAL <- as.factor(cards$LIMIT_BAL)
+
+```
+
+
+## 3. SEX : factorize 
+
+```{r}
+describe_sex <- function(i){
+  if(i=='1') return('M') 
+  return('F')
+}
+cards$SEX <- sapply(cards$SEX, describe_sex)
+cards$SEX <- as.factor(cards$SEX)
+```
+
+## 4. EDUCATION : 미상 및 기타 삭제 처리 후 (1%), factorize 
+
+
+```{r}
+
+nrow(cards %>% filter(EDUCATION > 3))
+
+cards <- cards %>% filter(EDUCATION < 4)
+nrow(cards) # 29546
+
+describe_edu <- function(i){
+  if(i=='1') return('G')
+  if(i=='2') return('U')
+  return('H')
+}
+
+cards$EDUCATION <- sapply(cards$EDUCATION, describe_edu)
+cards$EDUCATION <- as.factor(cards$EDUCATION)
+
+```
+
+
+## 5. MARRIAGE : 기타 삭제 처리 후, factorize(1%) 
+
+```{r}
+nrow(cards %>% filter(MARRIAGE ==3) )
+
+describe_mar <- function(i){
+  if(i=='1'){return('O')}
+  return('X')
+}
+
+cards$MARRIAGE <- sapply(cards$MARRIAGE, describe_mar)
+cards$MARRIAGE <- as.factor(cards$MARRIAGE)
+```
+
+
+## 6. AGE 
+
+나이를 10 대 단위로 조율 할까 하다가, 
+11살의 초4와, 19살의 고3을. 20살의 1학년과 29살의 대학원생을 같은 그룹에 묶는 건 매우 실례 같아서
+
+5 단위로 나누기로 함, 단 60대 이상은 전부 통일
+
+```{r}
+describe_age <- function(i){
+  if(i > 60){return("6S")}
+  if(i > 55){return('5O')}
+  if(i > 50){return('5Y')}
+  if(i > 45){return('4O')}
+  if(i > 40){return('4Y')}
+  if(i > 35){return('3O')}
+  if(i > 30){return('3Y')}
+  if(i > 25){return('2O')}
+  if(i > 20){return('2Y')}
+}
+cards$AGE <- sapply(cards$AGE, describe_age)
+cards$AGE <- as.factor(cards$AGE)
+
+```
+
+## 7. Defalt.payment.next.month : 변수 명 변경후 ( payment ), factorize
+```{r}
+colnames(cards)[25] <- 'PAYMENT'
+describe_pay <- function(i){
+  if(i==0)return("F")
+  return("T")
+}
+cards$PAYMENT <- as.factor(cards$PAYMENT)
+```
+
+
+## 8. 상환 상태 PAY_0 ~ PAY_6 
+
+- 값들 중에 -1, -2, 0 은 그냥 'NONE' 으로 통일 ( 연체 없음 )
+- 1을 제외하고 (1회성 연체 : 'ONCE'), 나머지 값은 통일 ('DELAY')
+
+```{r}
+describe_delay <- function(i){
+  if(i < 1){return('NONE')}
+  if(i == 1){return("ONCE")}
+  return("DELAY")
+}
+
+for(i in 7:12){
+  cards[,i] <- sapply(cards[,i], describe_delay)
+}
+
+```
+
+- 상환 상태를 단순화 했다고는 하지만, 결국 6개월 치 인것은 똑같음. 
+- 심도 있는 단순화를 위해, 이를 clustering을 하기로 함
+- 문제는, factor ("ONCE", "NONE", "DELAY")라서 euclidean distance를 사용 할 수 없다는 것
+
+- 아쉬운 대로, 6개의 sequence에 대해서, 아래의 식으로 distance를 계산 하기로 함
+
+$if(x_i==y_i) : dist = dist$ 
+
+$else : dist +1$
+
+
+```{r}
+nrow(cards)
+```
+
+- 문제는 30000 * 30000 matrix는 매우, 매우 size가 큼 (7.2G) 
+- 이를 위해 sparse Matrix 사용하려고 했으나 마찬가지로 계산이 expensive한것은 똑같음.
+- 아예 unique를 씌워서 sequence를 구분 하기로 함
+
+```{r}
+uniq_pattern <- unique(cards[,7:12])
+nrow(uniq_pattern)
+head(uniq_pattern)
+```
+
+그 결과 총 92개의 패턴이 발생
+즉, 30000개에 할 필요 없이 92*92 만 하면 됨
+
+```{r}
+distobj <- matrix(0,nrow(uniq_pattern), nrow(uniq_pattern))
+
+mydist <- function(x,y){
+  d <- 0
+  for(i in 1:length(x)){
+    if(x[i]!=y[i]) d <- d + 1 
+  }
+  return(d)
+}
+
+for(i in 1:nrow(uniq_pattern)){
+  for(j in 1:nrow(uniq_pattern)){
+    if(i > j){distobj[i,j] <- distobj[j,i]}
+    
+    distobj[i,j] = mydist(uniq_pattern[i,], uniq_pattern[j,])
+  }
+}
+
+head(distobj)
+distobj <- as.dist(distobj)
+
+```
+
+이를 h-clustering에 사용
+```{r}
+hc <- hclust(distobj)
+plot(hc)
+```
+
+결과, 크게 4가지 그룹으로 나뉨 (h = 0.9)
+
+샘플 수가 작은 순으로 표기 
+
+```{r}
+uniq_pattern[which(cutree(hc, h = 0.9)==4),]
+```
+
+- 그룹 1 : "건망증 타입", 패턴 47, 55, 67, 79
+
+마지막 11375 를 제외하고는 상환을 한번 정도만 밀리는데 다음 달에는 지장 없게 갚는 편.
+10일이 정산일이면 아이고 까먹었네 하다가 12일쯤에 넣어서 연체가 밀리는 걸로 추정.
+
+11375는 distance가 허접해서 섞인 경우라 오류긴 한데, 이 경우는 한번 한번 밀리다가 장기 연체가 되는 편
+
+```{r}
+uniq_pattern[which(cutree(hc, h = 0.9)==3),]
+```
+
+- 그룹 2 : "사장님 타입", 패턴 65, 68, 71, 184 등
+
+주로 5,6,7월에는 연체가 없으나 그 전에는 연체가 가끔 생기는 경우.
+종사하고 있는 직업상 수입의 변동이 있는 걸로 추정.
+마찬가지로 distance 문제로 모든 경우가 이렇지는 않음
+
+
+```{r}
+uniq_pattern[which(cutree(hc, h = 0.9)==1),]
+```
+
+- 그룹 3 을 보다가, 너무 cluster를 과하게 잘랐다는 생각을 함.
+이 그룹의 경우 6월에 연체가 없다는 걸 제외하곤 공통점이 별로 없음.
+
+더 들여다 보면 재밌는 결과가 나올 것 같긴 한데, 
+원래 목적은 6개월 상환 내용을 단순화 하려는 것 이었기 때문에, 
+이 부분에 대한 분석은 중단 후 그냥 unique_pattern을 바탕으로 단순화해서 넣기로 함.
+
+```{r}
+describe_delay2 <- function(i){
+  S <- 0
+  S <- S + length(which(i=='ONCE')) 
+  S <- S + length(which(i=='DELAY'))*5
+  return(S)
+}
+
+delay <- sapply(1:nrow(cards), function(i){describe_delay2(cards[i,7:12])})
+
+hist(delay)
+
+```
+
+delay 는 크게 3 그룹으로 분류 가능 
+
+1. 0점 (우량)
+2. 5점 이하 (양호)
+3. 10점 이상 (주의)
+
+이에 따라 6개 항목 치환
+
+```{r}
+describe_delay3 <- function(i){
+  if(i == 0)return('A')
+  if(i <= 5) return('B')
+  return('C')
+}
+
+delay <- sapply(delay, describe_delay3)
+delay <- as.factor(delay)
+cards$DELAY <- delay
+cards <- cards[,-c(7:12)]
+
+```
+
+## 9. 명세서 금액 BILL_AMT1 ~ BILL_AMT6
+
+
+```{r}
+summary(cards[,7:12])
+```
+명세서 금액이 -인 경우는 뭔지 잘 모르겠다. 카드 환불인가? 전산 오류?
+
+이 쪽은 별 관심이 없으므로, 데이터에서 bill이 0이하 의 값이 있는 데이터를 0으로 치환 함. 사실 버려도 상관은 없다.
+
+```{r}
+for(i in 7:12){
+  cards[which(cards[,i]<0),i] <- 0
+}
+```
+
+```{r}
+par(mfrow = c(2,3))
+hist(cards[,7])
+hist(cards[,8])
+hist(cards[,9])
+hist(cards[,10])
+hist(cards[,11])
+hist(cards[,12])
+par(mfrow = c(1,1))
+```
+
+명세서 금액의 경우는 대부분 소액 (5K 이하)이며
+그 외에는 유의미한 차이를 보이지 않는 대형 결제 라고 봐도 무방할 것 같다. 
+그러나, 50K이상의 초대형 결제가 있기 때문에, 해당 그룹 포함 4개로 나누기로 함
+
+```{r}
+describe_bill <- function(i){
+  if(i==0) return("A") 
+  if(i <= 5000) return("B") 
+  if(i <= 50000) return("C")
+  return("D")
+}
+
+for(i in 7:12){
+  cards[,i] <- sapply(cards[,i],describe_bill)
+  cards[,i] <- as.factor(cards[,i])
+}
+
+summary(cards[,7:12])
+
+```
+
+분류가 잘못 된 것 같다. 0 , 소형, 대형, 초대형으로 나누면 얼추 비슷 할 줄 알았는데
+대형이 좀 과하게 많다. 이 경우 data 자체에 categorical bias가 생길 수도 있다.
+물론 대형 고객을 더 고려하는게 필요 하다 라고 포장 하면 되므로, 묻고 간다.
+
+
+위에서 했던 것처럼, categorical 에 주관적인 weight을 줘서 한 항목으로 합친다
+
+```{r}
+describe_bill2 <- function(i){
+  S <- 0
+  S <- S + length(which(i=='B')) 
+  S <- S + length(which(i=='C'))*5
+  S <- S + length(which(i=='D'))*25
+  return(S)
+}
+
+bill <- sapply(1:nrow(cards), function(i){describe_bill2(cards[i,7:12])})
+
+hist(bill)
+hist(bill[which(bill < 50)])
+```
+
+0, ~ 10, ~ 30, 이외 의 구간으로 그룹을 나눔
+
+```{r}
+describe_bill3 <- function(i){
+  if(i == 0) return('A')
+  if(i <= 10) return('B')
+  if(i <= 30) return('C')
+  return('D')
+}
+
+bill <- sapply(bill, describe_bill3)
+bill <- as.factor(bill)
+cards$BILL <- bill
+cards <- cards[,-c(7:12)]
+
+summary(cards)
+```
+
+## 10. 이전 지불 금액 : 데이터에 관심이 없다. 이미 연체로 필요한 정보는 있기 때문에 그냥 삭제함
+
+```{r}
+cards <- cards %>% select(ID, LIMIT_BAL, SEX, EDUCATION, MARRIAGE, AGE, PAYMENT, DELAY, BILL)
+```
+
+
+------
+
+# linear modeling
+
+긴 데이터 전처리가 끝났다. 30000 X 25에서 29546 X 9로 , 
+
+```{r}
+summary(cards)
+```
+
+이제 원래 하고자 했던 질문을 다시 보자
+
+1. 어떤 사람이 연체를 할까
+2. 어떤 사람이 결제를 많이 하는 우량고객인가 
+3. 계절 별로 연관이 있나 
+4. 고객이 그룹화 되어 지는가
+
+
+연체 (DELAY)는 B 혹은 C인지만 구분 하면 됨.
+
+예측엔 여러 모델이 있지만, 단순하게 linear인 svm으로 보기로 함.
+
+문제는 categorical data는 그대로 쓰긴 어렵고 numerical 하게 다시 바꿔야 함.
+
+one-hot encoding.
+
+## 1. 연체 : 나이, 결혼, 교육, 성별, 자산
+
+```{r}
+Q1 <- cards %>% select(LIMIT_BAL, EDUCATION, MARRIAGE, AGE, DELAY)
+summary(Q1)
+
+Q1$LIMIT_BAL <- as.numeric(Q1$LIMIT_BAL)
+Q1$EDUCATION <- as.numeric(Q1$EDUCATION)
+Q1$MARRIAGE <- as.numeric(Q1$MARRIAGE)
+Q1$AGE <- as.numeric(Q1$AGE)
+Q1$DELAY <- as.numeric(Q1$DELAY)
+set.seed(20200613)
+idx <- sample(1:nrow(Q1), size = nrow(Q1)/2)
+Q1train <- Q1[idx,]
+Q1test <- Q1[idx,]
+
+fm <- lm(DELAY ~ ., Q1train)
+
+summary(fm)
+
+```
+
+
+p-value 기준, EDUCTION과 AGE는 별 연관이 없다고 한다
+
+
+문제는 R2 가 0.051로 거의 random과 유사함. 망한것 같다.
+
+plot 결과도 마찬가지
+
+```{r}
+plot(predict(fm, Q1train), Q1train$DELAY)
+```
+
+왜지 ?, 이유를 알지 못하는 상태에서 2 3번을 하는건 의미가 없을 것 같다.
+
+------
+
+# EDA로 보자 그냥
+
+## 연체, 나이, 결혼, 교육, 자산의 관계
+
+```{r}
+ggplot(data = cards, aes(x = DELAY, y = LIMIT_BAL, colour = EDUCATION)) + 
+  geom_jitter() +
+  facet_grid(MARRIAGE~AGE) + 
+  scale_color_manual(values = c('#e74c3c', '#f1c40f', '#e67e22'))
+```
+
+결과 설명
+
+- X축, DELAY 가 A 일수록 좋고, 
+- Y축, 은 위로 갈 수록 고자산.
+- 색상(EDUCATION) 은 진할 수록 고학력.
+- 우측 O,X 는 기혼 여부.
+
+찾은 insight
+
+1. 고학력 -> 결혼 안함.
+2. 고자산 -> 연체 줄어듬.
+3. 자산 분포는 20대 초반에 제일 적다가, 점차 늘어나며 50대 초반 이후로 줄어드는 경향.
+4. 학력과 자산은 비례하는 것처럼 보임. (아래로 갈수록 색 연함)
+5. 미혼의 경우, 20대 후반 ~ 30대 초반까지 연체율 높음.
+6. 기혼의 경우, 30대 초반 ~ 40대 초반까지 연체율 높음.
+
+
+## 결제양, 자산, 지불방식, 성별 의 관계 
+
+------
+
+```{r}
+ggplot(data = cards, aes(x = BILL, y = LIMIT_BAL, colour = SEX)) + 
+  geom_jitter() + 
+  facet_grid( ~ PAYMENT)
+```
+
+
+결과 설명 
+
+- X축, BILL이 왼쪽 일 수록 큰 계산.
+- Y축, 은 위로 갈 수록 고자산
+- 색상은 F와 M ( 유의미한 차이 없어 보임)
+- 우측 0, 1 은 지불 방식의 차이 (변수 내용 이해를 못함, 신용 vs 체크 라 가정)
+
+찾은 insight
+
+1. 성별에 따라 연관 없어보임.
+2. 대부분 체크 카드를 많이 사용
+3. 신용 카드의 경우, 저 자산 - 중형 거래에 많이 쓰임 (우측 A,C)
+4. 체크 카드는 전 범위에 골고루 쓰임
+
+------
+
+# 결론 
+
+1. 어떤 사람이 연체를 할까 
+
+저학력, 저자산, 미혼 + 2후 3초 , 기혼 + 3초 4초
+
+2. 어떤 사람이 결제를 많이 하는 우량 고객인가
+
+고자산 일 줄 알았지만, 그것과는 관계 없음. 전혀
+
+3. 계절 별로 연관이 있나 
+
+데이터 단순화 과정에서 사라짐 
+
+4. 고객이 그룹화 되어 지는가
+
+연체 패턴을 바탕으로 92개 그룹으로 나눠지는 것 확인함.
+
+끝
+
+
+
+
